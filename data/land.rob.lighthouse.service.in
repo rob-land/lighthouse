@@ -1,0 +1,15 @@
+[Unit]
+Description=Lighthouse find-my-device agent
+Documentation=https://codeberg.org/robland/lighthouse
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=land.rob.lighthouse.Agent
+ExecStart=@BINDIR@/lighthouse agent
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

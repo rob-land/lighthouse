@@ -13,10 +13,11 @@ pkgdatadir = '@PKGDATADIR@'
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
+gi.require_version('Gst', '1.0')  # used by the beam role (ring audio)
 from gi.repository import Gio
 
 resource_path = os.path.join(pkgdatadir, '@APP_ID@.gresource')
 Gio.Resource.load(resource_path)._register()
 
-from lighthouse import main
-sys.exit(main.main())
+from lighthouse import cli
+sys.exit(cli.main())

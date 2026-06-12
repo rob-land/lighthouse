@@ -15,8 +15,6 @@ template $LighthouseWindow: Adw.ApplicationWindow {
     Adw.Breakpoint {
       condition ("max-width: 600sp")
       setters {
-        // Hand view-switching off to the bottom bar (thumb-reach on
-        // Phosh). Apps with no view switcher can drop this breakpoint.
       }
     }
 
@@ -37,10 +35,36 @@ template $LighthouseWindow: Adw.ApplicationWindow {
       }
 
       content: Adw.ToastOverlay toast_overlay {
-        child: Adw.StatusPage {
-          icon-name: "land.rob.lighthouse";
-          title: _("Hello, Lighthouse");
-          description: _("Replace this with the real first view.");
+        child: Adw.PreferencesPage {
+          Adw.PreferencesGroup {
+            title: _("This Phone");
+
+            [header-suffix]
+            Button test_ring_button {
+              valign: center;
+              label: _("Test Ring");
+
+              styles [
+                "suggested-action",
+                "pill",
+              ]
+            }
+
+            Adw.ActionRow status_row {
+              title: _("Find-my agent");
+              subtitle: _("Checking…");
+
+              [prefix]
+              Image status_icon {
+                icon-name: "content-loading-symbolic";
+              }
+            }
+          }
+
+          Adw.PreferencesGroup peers_group {
+            title: _("Devices");
+            description: _("Devices on your network that can ring this phone");
+          }
         };
       };
     };

@@ -34,6 +34,24 @@ install_data(
   install_dir: datadir / 'glib-2.0' / 'schemas',
 )
 
+# D-Bus session activation for the agent (lets the GUI start it on demand).
+configure_file(
+  input:         'land.rob.lighthouse.Agent.service.in',
+  output:        'land.rob.lighthouse.Agent.service',
+  configuration: conf,
+  install:       true,
+  install_dir:   datadir / 'dbus-1' / 'services',
+)
+
+# systemd-user unit for the always-on agent (needs `loginctl enable-linger`).
+configure_file(
+  input:         'land.rob.lighthouse.service.in',
+  output:        'land.rob.lighthouse.service',
+  configuration: conf,
+  install:       true,
+  install_dir:   prefix / 'lib' / 'systemd' / 'user',
+)
+
 install_data(
   'icons/hicolor/scalable/apps/land.rob.lighthouse.svg',
   install_dir: datadir / 'icons' / 'hicolor' / 'scalable' / 'apps',

@@ -12,7 +12,30 @@ The three processes (DESIGN §2): `lighthoused` (agent, systemd-user),
 
 ## P0 — walking skeleton (ring it on the LAN)
 
-### 1. `lighthoused` — agent daemon skeleton
+> **Status — initial version committed (2026-06-12).** Implemented and
+> smoke-tested headless: the agent daemon (`agent.py`), the
+> `land.rob.lighthouse.Agent` D-Bus surface (TestRing/Page/StopRing/
+> ListPeers/RingPeer — all respond; TestRing stages the beam), the beam
+> ring (`beam.py`: Gst tone + `wpctl` sink save/raise/restore + guarded
+> `Lfb` haptics + fullscreen stop window), the GUI Test Ring + device
+> viewer (`window.py`), KDE Connect **discovery** (UDP announce/receive),
+> and the systemd + D-Bus-activation units. Single `lighthouse` binary
+> dispatches the gui/agent/beam roles (`cli.py`).
+>
+> **Remaining for P0:** (a) validate the encrypted link + `findmyphone`
+> responder against a real KDE Connect / Valent peer — needs two devices;
+> (b) run the beam on an actual display/Phosh session; (c) the security
+> item below.
+>
+> 🔴 **SECURITY-CRITICAL before any real use.** The TLS link in
+> `kdeconnect.py::_Link` currently uses `CERT_NONE` and auto-accepts
+> pairing (TOFU *without* pinning). That brings up encryption but does
+> **not authenticate the peer**, so the channel is open to MITM. Must
+> implement: pin the peer certificate at pairing (store + verify its
+> fingerprint on every subsequent link), and a pairing-confirm prompt.
+> Do not expose beyond a controlled two-device bring-up test until done.
+
+### 1. `lighthoused` — agent daemon skeleton ✅ (first draft)
 A GLib main-loop daemon launched by a systemd-user unit. Owns transport
 plugins and the command dispatcher. No GUI dependency. Logs via the
 cohort `logging_setup.py`.

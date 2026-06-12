@@ -1,4 +1,4 @@
-from lighthouse import main
+from lighthouse import cli
 
 if __name__ == "__main__":
-    raise SystemExit(main.main())
+    raise SystemExit(cli.main())

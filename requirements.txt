@@ -1,1 +1,6 @@
-# Add Python runtime deps here, one per line.
+# Python runtime deps, one per line.
+# Used by the agent to generate this device's self-signed KDE Connect
+# certificate (note: cryptography ships per-arch binary wheels, so
+# fix-flatpak-deps.py must emit multi-arch entries — see the cohort
+# flatpak-deps-multiarch landmine).
+cryptography

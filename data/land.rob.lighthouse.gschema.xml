@@ -13,5 +13,18 @@
       <default>false</default>
       <summary>Whether the window is maximized</summary>
     </key>
+
+    <key name="device-name" type="s">
+      <default>''</default>
+      <summary>Display name advertised to peers (empty = hostname)</summary>
+    </key>
+    <key name="override-silent" type="b">
+      <default>true</default>
+      <summary>Ring at full volume even when the phone is silenced</summary>
+    </key>
+    <key name="ring-duration-seconds" type="i">
+      <default>60</default>
+      <summary>How long the beam rings before giving up</summary>
+    </key>
   </schema>
 </schemalist>
