@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/land/rob/lighthouse">
+    <file preprocess="xml-stripblanks" alias="ui/window.ui">window.ui</file>
+    <file preprocess="xml-stripblanks" alias="ui/help-overlay.ui">help-overlay.ui</file>
+    <file alias="ui/style.css">style.css</file>
+  </gresource>
+</gresources>

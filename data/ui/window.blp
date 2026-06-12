@@ -1,0 +1,62 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $LighthouseWindow: Adw.ApplicationWindow {
+  title: _("Lighthouse");
+  default-width: 360;
+  default-height: 760;
+  width-request: 360;
+  height-request: 360;
+
+  content: Adw.BreakpointBin {
+    width-request: 360;
+    height-request: 360;
+
+    Adw.Breakpoint {
+      condition ("max-width: 600sp")
+      setters {
+        // Hand view-switching off to the bottom bar (thumb-reach on
+        // Phosh). Apps with no view switcher can drop this breakpoint.
+      }
+    }
+
+    child: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar header_bar {
+        title-widget: Adw.WindowTitle window_title {
+          title: _("Lighthouse");
+        };
+
+        [end]
+        MenuButton {
+          icon-name: "open-menu-symbolic";
+          primary: true;
+          menu-model: primary_menu;
+          tooltip-text: _("Main Menu");
+        }
+      }
+
+      content: Adw.ToastOverlay toast_overlay {
+        child: Adw.StatusPage {
+          icon-name: "land.rob.lighthouse";
+          title: _("Hello, Lighthouse");
+          description: _("Replace this with the real first view.");
+        };
+      };
+    };
+  };
+}
+
+menu primary_menu {
+  section {
+    item {
+      label: _("Keyboard Shortcuts");
+      action: "win.show-help-overlay";
+    }
+
+    item {
+      label: _("About Lighthouse");
+      action: "app.about";
+    }
+  }
+}

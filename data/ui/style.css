@@ -1,0 +1,48 @@
+/*
+ * Lighthouse — application styles
+ *
+ * Cohort-shared classes. Drop unused ones; don't rename them per-app.
+ * See STYLE_GUIDE.md §Suite UI conventions for the reference set.
+ */
+
+/* Caption helpers used above message bubbles, in reaction pills, etc. */
+.dim-caption  { font-size: 0.82em; }
+.bold-name    { font-weight: 600; }
+
+/* Message / chat bubbles — keep if the app has a conversation view. */
+.msg-bubble {
+    border-radius: 18px;
+    padding: 8px 14px;
+}
+.msg-bubble.mine {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+    border-bottom-right-radius: 4px;
+}
+.msg-bubble.theirs {
+    background-color: @card_bg_color;
+    border-bottom-left-radius: 4px;
+}
+
+/* Reaction pills — keep if the app has reactions. */
+.reaction-pill {
+    border-radius: 999px;
+    padding: 0 8px;
+    min-height: 32px;
+    font-size: 0.85em;
+}
+.reaction-pill-mine {
+    background-color: alpha(@accent_bg_color, 0.18);
+    color: @accent_fg_color;
+}
+
+/* Date separators between days in a chat / log view. */
+.date-separator       { margin-top: 10px; margin-bottom: 6px; }
+.date-separator-label {
+    background-color: alpha(@card_fg_color, 0.08);
+    border-radius: 999px;
+    padding: 2px 14px;
+    font-size: 0.78em;
+    font-weight: 600;
+    color: @dim_label_color;
+}

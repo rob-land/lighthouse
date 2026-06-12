@@ -1,0 +1,5 @@
+data/land.rob.lighthouse.desktop.in
+data/land.rob.lighthouse.metainfo.xml.in
+data/ui/window.blp
+data/ui/help-overlay.blp
+src/lighthouse/window.py

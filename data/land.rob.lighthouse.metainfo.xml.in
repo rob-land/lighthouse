@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>land.rob.lighthouse</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Lighthouse</name>
+  <summary>A native GNOME application</summary>
+  <description>
+    <p>TODO: write a real description before shipping.</p>
+  </description>
+  <launchable type="desktop-id">land.rob.lighthouse.desktop</launchable>
+  <developer_name>Rob</developer_name>
+  <url type="homepage">https://codeberg.org/robland/lighthouse</url>
+  <url type="bugtracker">https://codeberg.org/robland/lighthouse/issues</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-06-11">
+      <description>
+        <p>Initial scaffold.</p>
+      </description>
+    </release>
+  </releases>
+</component>
