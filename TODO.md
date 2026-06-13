@@ -12,28 +12,31 @@ The three processes (DESIGN §2): `lighthoused` (agent, systemd-user),
 
 ## P0 — walking skeleton (ring it on the LAN)
 
-> **Status — initial version committed (2026-06-12).** Implemented and
-> smoke-tested headless: the agent daemon (`agent.py`), the
-> `land.rob.lighthouse.Agent` D-Bus surface (TestRing/Page/StopRing/
-> ListPeers/RingPeer — all respond; TestRing stages the beam), the beam
-> ring (`beam.py`: Gst tone + `wpctl` sink save/raise/restore + guarded
-> `Lfb` haptics + fullscreen stop window), the GUI Test Ring + device
-> viewer (`window.py`), KDE Connect **discovery** (UDP announce/receive),
-> and the systemd + D-Bus-activation units. Single `lighthouse` binary
-> dispatches the gui/agent/beam roles (`cli.py`).
+> **Status — P0 first draft (2026-06-12).** Implemented and tested:
+> agent daemon (`agent.py`); `land.rob.lighthouse.Agent` D-Bus surface
+> (all methods respond; TestRing stages the beam); the beam ring
+> (`beam.py`: Gst tone + `wpctl` sink save/raise/restore + guarded `Lfb`
+> haptics + fullscreen stop); GUI Test Ring + device viewer (`window.py`);
+> KDE Connect discovery + a **mutually-authenticated TLS link with
+> certificate pinning** (`kdeconnect.py` + `trust.py`); systemd +
+> D-Bus-activation units. Single `lighthouse` binary dispatches the
+> gui/agent/beam roles (`cli.py`). The link is covered by an integration
+> test (`tests/test_link.py`, wired into `meson test`) validating
+> pair→pin→ring, unpaired-ring-ignored, and MITM-cert-rejected between two
+> instances over loopback — all green.
 >
-> **Remaining for P0:** (a) validate the encrypted link + `findmyphone`
-> responder against a real KDE Connect / Valent peer — needs two devices;
-> (b) run the beam on an actual display/Phosh session; (c) the security
-> item below.
+> **Remaining for P0:** (a) a user-facing **pairing-confirm prompt** —
+> pairing currently auto-accepts (it pins on accept, so an accepted
+> pairing *is* authenticated, but any LAN peer can currently get
+> accepted); (b) validate interop against a real KDE Connect / Valent peer
+> (two devices); (c) run the beam on an actual display/Phosh session.
 >
-> 🔴 **SECURITY-CRITICAL before any real use.** The TLS link in
-> `kdeconnect.py::_Link` currently uses `CERT_NONE` and auto-accepts
-> pairing (TOFU *without* pinning). That brings up encryption but does
-> **not authenticate the peer**, so the channel is open to MITM. Must
-> implement: pin the peer certificate at pairing (store + verify its
-> fingerprint on every subsequent link), and a pairing-confirm prompt.
-> Do not expose beyond a controlled two-device bring-up test until done.
+> 🟠 **Security status.** The original `CERT_NONE`/no-pinning gap is
+> **closed**: links use mutual TLS, capture the peer cert, pin it on
+> pairing, and refuse a mismatched cert on reconnect (MITM-rejected, with
+> a regression test). `findmyphone` is honoured only from a paired,
+> cert-verified peer. Remaining hardening is the pairing-confirm prompt so
+> a human authorises *which* peers get pinned in the first place.
 
 ### 1. `lighthoused` — agent daemon skeleton ✅ (first draft)
 A GLib main-loop daemon launched by a systemd-user unit. Owns transport

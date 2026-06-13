@@ -1,32 +1,34 @@
 """KDE Connect LAN transport — discovery + the ``findmyphone`` plugin.
 
-Two halves with very different maturity:
-
-* **Discovery** (UDP identity broadcast/receive) is complete and runs in
-  the GLib main loop. It populates the device list the GUI shows.
-* **The encrypted link** (TCP + mutual TLS + pairing) is a first draft.
-  The handshake roles and trust-on-first-use pinning follow the KDE
-  Connect protocol as documented, but have **not yet been validated
-  against a real KDE Connect / Valent peer** — that needs two devices and
-  is the first on-device task (see TODO.md P0). Each link runs in its own
-  worker thread; failures are contained so discovery and the local ring
-  keep working regardless.
+* **Discovery** (UDP identity broadcast/receive) runs in the GLib main
+  loop and populates the device list the GUI shows.
+* **The encrypted link** is mutual TLS over TCP using GIO's TLS, with
+  **trust-on-first-use certificate pinning** (see :mod:`lighthouse.trust`):
+  the peer certificate is captured during the handshake, pinned when a
+  device pairs, and verified on every later link — a mismatch is refused
+  as a possible MITM. ``findmyphone`` is only honoured from a paired,
+  cert-verified peer. Each link runs on its own worker thread; failures
+  are contained.
 
 Canonical link sequence (protocol v7): the device that *broadcasts* over
-UDP becomes the TLS **server**; the device that *receives* the broadcast
-opens the TCP connection, sends its own identity, and becomes the TLS
-**client**.
+UDP is the TLS **server**; the device that *receives* the broadcast opens
+the TCP connection, sends its identity, and is the TLS **client**.
+
+NOTE — still needs validation against a real KDE Connect / Valent peer
+(two devices). The pairing flow currently auto-accepts; a user-facing
+pairing-confirm prompt is the remaining P0 step (the cryptographic
+pinning below is in place, so an *accepted* pairing is then authenticated).
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import socket
-import ssl
 import threading
 import time
 
-from gi.repository import GLib
+from gi.repository import Gio, GLib
 
 from lighthouse.protocol import (
     DEFAULT_PORT,
@@ -37,6 +39,7 @@ from lighthouse.protocol import (
     DeviceIdentity,
     NetworkPacket,
 )
+from lighthouse.trust import TrustStore
 
 log = logging.getLogger(__name__)
 
@@ -68,8 +71,10 @@ class Device:
 class LanProvider:
     """Owns the UDP discovery sockets, the TCP server, and active links."""
 
-    def __init__(self, identity: DeviceIdentity, on_page) -> None:
+    def __init__(self, identity: DeviceIdentity, on_page,
+                 trust_dir: str | None = None) -> None:
         self._identity = identity
+        self.trust = TrustStore(trust_dir)
         self._on_page = on_page          # called (source_name) in main loop
         self._on_devices_changed = None  # optional callback, main loop
         self._devices: dict[str, Device] = {}
@@ -170,7 +175,9 @@ class LanProvider:
         dev_id = body["deviceId"]
         existing = self._devices.get(dev_id)
         if existing is None:
-            self._devices[dev_id] = Device(body, address)
+            dev = Device(body, address)
+            dev.paired = self.trust.is_paired(dev_id)
+            self._devices[dev_id] = dev
             log.info("discovered %s (%s) at %s",
                      body.get("deviceName"), dev_id, address)
             self._notify_devices_changed()
@@ -201,8 +208,7 @@ class LanProvider:
             return GLib.SOURCE_CONTINUE
         # Inbound connection → the peer received our broadcast, so we are
         # the TLS server.
-        link = _Link(self, conn, addr[0], role="server")
-        link.start()
+        _Link(self, conn, addr[0], role="server").start()
         return GLib.SOURCE_CONTINUE
 
     def _initiate_link(self, body: dict, address: str) -> None:
@@ -212,9 +218,7 @@ class LanProvider:
         except OSError as exc:
             log.debug("connect to %s:%d failed: %s", address, port, exc)
             return
-        link = _Link(self, conn, address, role="client",
-                     peer_identity=body)
-        link.start()
+        _Link(self, conn, address, role="client", peer_identity=body).start()
 
     def ring_peer(self, device_id: str) -> bool:
         link = self._links.get(device_id)
@@ -245,16 +249,7 @@ class LanProvider:
 
 
 class _Link(threading.Thread):
-    """One TLS link to a peer, run on a worker thread.
-
-    NOTE (first draft): TLS uses CERT_NONE on both sides, which brings up
-    an encrypted channel but does not yet pin/verify the peer certificate.
-    Real pairing — exchanging and trusting certs, and a pairing-confirm UI
-    — is the next step and must be validated with a real KDE Connect peer
-    before this is trustworthy. Until then, pairing requests are
-    auto-accepted, which is fine for a controlled bring-up test and NOT
-    for production.
-    """
+    """One mutually-authenticated TLS link to a peer, on a worker thread."""
 
     def __init__(self, provider: LanProvider, sock: socket.socket,
                  address: str, role: str, peer_identity: dict | None = None):
@@ -264,123 +259,179 @@ class _Link(threading.Thread):
         self._address = address
         self._role = role
         self._peer = peer_identity or {}
-        self._tls: ssl.SSLSocket | None = None
-        self._send_lock = threading.Lock()
         self._device_id = self._peer.get("deviceId", "")
+        self._tls = None
+        self._ostream = None
+        self._istream = None
+        self._peer_cert = None
+        self._paired = False
+        self._pair_requested = False
+        self._send_lock = threading.Lock()
+        self._cancellable = Gio.Cancellable()
         self._running = True
+        self.is_up = False
 
     def run(self) -> None:
         try:
-            self._handshake()
-        except (ssl.SSLError, OSError, ValueError) as exc:
+            self._establish()
+        except (GLib.Error, OSError, ValueError) as exc:
             log.warning("link %s handshake failed: %s", self._address, exc)
-            self._sock.close()
+            self._safe_close()
             return
+
+        match = self._provider.trust.matches(self._device_id, self._peer_cert)
+        if match is False:
+            log.error("SECURITY: certificate mismatch for paired device "
+                      "%s (%s) — refusing link (possible MITM)",
+                      self._peer.get("deviceName"), self._device_id)
+            self._safe_close()
+            return
+        self._paired = match is True
+
         if self._device_id:
             self._provider._register_link(self._device_id, self)
-        log.info("link up: %s (%s) via %s",
-                 self._peer.get("deviceName", "?"), self._device_id, self._role)
+        log.info("link up: %s (%s) role=%s paired=%s",
+                 self._peer.get("deviceName", "?"), self._device_id,
+                 self._role, self._paired)
+        self.is_up = True
         try:
             self._read_loop()
         finally:
             if self._device_id:
                 self._provider._unregister_link(self._device_id)
-            self._close_socket()
+            self._safe_close()
 
-    def _handshake(self) -> None:
+    # -- handshake -------------------------------------------------------
+
+    def _establish(self) -> None:
         ident = self._provider._identity
         if self._role == "client":
-            # We already have the peer identity (from its UDP broadcast);
-            # send ours over TCP, then upgrade as TLS client.
+            # We already have the peer identity (from its broadcast); send
+            # ours, then upgrade as TLS client presenting our certificate.
             self._sock.sendall(ident.identity_packet().serialize())
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            ctx.load_cert_chain(ident.cert_path, ident.key_path)
-            self._tls = ctx.wrap_socket(self._sock, server_side=False)
+            base = self._wrap(self._sock)
+            tls = Gio.TlsClientConnection.new(base, None)
+            tls.set_property("certificate", ident.tls_certificate())
         else:
-            # Inbound: read the peer's identity line, then upgrade as
-            # TLS server.
-            self._peer = self._read_plaintext_identity().body
+            # Inbound: read the peer identity (exactly up to the newline so
+            # we don't swallow TLS bytes), then upgrade as TLS server.
+            self._peer = self._read_plaintext_identity()
             self._device_id = self._peer.get("deviceId", "")
             self._provider._note_device(self._peer, self._address)
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.verify_mode = ssl.CERT_NONE
-            ctx.load_cert_chain(ident.cert_path, ident.key_path)
-            self._tls = ctx.wrap_socket(self._sock, server_side=True)
+            base = self._wrap(self._sock)
+            tls = Gio.TlsServerConnection.new(base, ident.tls_certificate())
+            tls.set_property("authentication-mode",
+                             Gio.TlsAuthenticationMode.REQUIRED)
+        tls.connect("accept-certificate", self._on_accept_certificate)
+        tls.handshake(self._cancellable)
+        self._tls = tls
+        self._ostream = tls.get_output_stream()
+        self._istream = Gio.DataInputStream.new(tls.get_input_stream())
+        if self._peer_cert is None:
+            self._peer_cert = tls.get_peer_certificate()
 
-    def _read_plaintext_identity(self) -> NetworkPacket:
-        buf = b""
+    def _on_accept_certificate(self, _conn, peer_cert, _errors) -> bool:
+        # Accept at the TLS layer and capture the cert; authenticity is
+        # enforced afterwards against the pinned cert (run()).
+        self._peer_cert = peer_cert
+        return True
+
+    def _wrap(self, sock: socket.socket):
+        fd = os.dup(sock.fileno())
+        gsock = Gio.Socket.new_from_fd(fd)
+        conn = gsock.connection_factory_create_connection()
+        sock.close()
+        return conn
+
+    def _read_plaintext_identity(self) -> dict:
         self._sock.settimeout(5)
-        while b"\n" not in buf:
-            chunk = self._sock.recv(4096)
-            if not chunk:
+        buf = b""
+        while not buf.endswith(b"\n"):
+            ch = self._sock.recv(1)
+            if not ch:
                 raise OSError("peer closed before identity")
-            buf += chunk
+            buf += ch
         self._sock.settimeout(None)
-        line = buf.split(b"\n", 1)[0]
-        packet = NetworkPacket.parse(line)
+        packet = NetworkPacket.parse(buf)
         if packet.type != PACKET_IDENTITY:
             raise ValueError(f"expected identity, got {packet.type}")
-        return packet
+        return packet.body
+
+    # -- packet loop -----------------------------------------------------
 
     def _read_loop(self) -> None:
-        buf = b""
         while self._running:
             try:
-                chunk = self._tls.recv(4096)
-            except (ssl.SSLError, OSError):
+                line, _length = self._istream.read_line_utf8(self._cancellable)
+            except GLib.Error:
                 break
-            if not chunk:
+            if line is None:       # EOF
                 break
-            buf += chunk
-            while b"\n" in buf:
-                line, buf = buf.split(b"\n", 1)
-                if line.strip():
-                    self._handle(line)
+            if line.strip():
+                self._handle(line)
 
-    def _handle(self, line: bytes) -> None:
+    def _handle(self, line: str) -> None:
         try:
             packet = NetworkPacket.parse(line)
         except (ValueError, KeyError):
             return
         if packet.type == PACKET_FINDMYPHONE:
-            name = self._peer.get("deviceName", "a paired device")
-            log.info("findmyphone request from %s", name)
-            self._provider._dispatch_page(name)
+            if not self._paired:
+                log.warning("ignoring findmyphone from unpaired %s",
+                            self._device_id)
+                return
+            self._provider._dispatch_page(
+                self._peer.get("deviceName", "a paired device"))
         elif packet.type == PACKET_PAIR:
             self._handle_pair(packet)
         elif packet.type == PACKET_PING:
             log.debug("ping from %s", self._peer.get("deviceName"))
 
     def _handle_pair(self, packet: NetworkPacket) -> None:
-        wants = bool(packet.body.get("pair", False))
-        if wants:
-            # First-draft TOFU: accept and echo a pair confirmation.
-            self.send(NetworkPacket(PACKET_PAIR, {"pair": True}))
+        if packet.body.get("pair"):
+            # TOFU: pin the cert we already verified at the TLS layer.
+            # (Production: gate this behind an explicit user confirmation.)
+            if self._peer_cert is not None:
+                self._provider.trust.pin(self._device_id, self._peer_cert)
+            self._paired = True
             self._provider._mark_paired(self._device_id, True)
-            log.info("auto-accepted pairing with %s (first-draft TOFU)",
-                     self._peer.get("deviceName"))
+            if not self._pair_requested:
+                self.send(NetworkPacket(PACKET_PAIR, {"pair": True}))
+            self._pair_requested = False
+            log.info("paired with %s", self._peer.get("deviceName"))
         else:
+            self._provider.trust.unpin(self._device_id)
+            self._paired = False
             self._provider._mark_paired(self._device_id, False)
 
+    # -- public ----------------------------------------------------------
+
+    def request_pair(self) -> None:
+        self._pair_requested = True
+        self.send(NetworkPacket(PACKET_PAIR, {"pair": True}))
+
     def send(self, packet: NetworkPacket) -> bool:
-        if self._tls is None:
+        if self._ostream is None:
             return False
         try:
             with self._send_lock:
-                self._tls.sendall(packet.serialize())
+                self._ostream.write_all(packet.serialize(), None)
             return True
-        except (ssl.SSLError, OSError) as exc:
+        except GLib.Error as exc:
             log.debug("send to %s failed: %s", self._device_id, exc)
             return False
 
     def close(self) -> None:
+        # Cancel any in-progress read so the worker thread unwinds and runs
+        # _safe_close() itself — closing the GIO stream from another thread
+        # while a read is blocked on it would deadlock.
         self._running = False
-        self._close_socket()
+        self._cancellable.cancel()
 
-    def _close_socket(self) -> None:
-        try:
-            (self._tls or self._sock).close()
-        except OSError:
-            pass
+    def _safe_close(self) -> None:
+        for closeable in (self._tls, self._sock):
+            try:
+                if closeable is not None:
+                    closeable.close()
+            except (OSError, GLib.Error):
+                pass

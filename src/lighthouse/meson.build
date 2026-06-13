@@ -27,6 +27,7 @@ python.install_sources(
     'main.py',
     'protocol.py',
     'service.py',
+    'trust.py',
     'window.py',
   ),
   subdir: meson.project_name(),

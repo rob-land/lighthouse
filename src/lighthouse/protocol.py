@@ -69,8 +69,9 @@ class NetworkPacket:
         return f"<NetworkPacket {self.type} {self.body!r}>"
 
 
-def config_dir() -> str:
-    path = os.path.join(GLib.get_user_config_dir(), "lighthouse")
+def config_dir(base: str | None = None) -> str:
+    path = base if base is not None else os.path.join(
+        GLib.get_user_config_dir(), "lighthouse")
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -83,14 +84,23 @@ class DeviceIdentity:
     trust-on-first-use pin survives restarts.
     """
 
-    def __init__(self) -> None:
-        cdir = config_dir()
+    def __init__(self, base_dir: str | None = None) -> None:
+        cdir = config_dir(base_dir)
         self._id_path = os.path.join(cdir, "device-id")
         self.cert_path = os.path.join(cdir, "certificate.pem")
         self.key_path = os.path.join(cdir, "private.pem")
+        self._tls_cert = None
         self.device_id = self._load_or_create_id()
         self.device_name = self._default_name()
         self._ensure_certificate()
+
+    def tls_certificate(self):
+        """This device's certificate+key as a Gio.TlsCertificate (cached)."""
+        if self._tls_cert is None:
+            from gi.repository import Gio
+            self._tls_cert = Gio.TlsCertificate.new_from_files(
+                self.cert_path, self.key_path)
+        return self._tls_cert
 
     def _load_or_create_id(self) -> str:
         try:
