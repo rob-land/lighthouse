@@ -82,9 +82,17 @@ class LanProvider:
         self._udp: socket.socket | None = None
         self._tcp: socket.socket | None = None
         self._announce_id = 0
+        self._pending_pairs: dict[str, "_Link"] = {}
+        self._pair_timeout_ids: dict[str, int] = {}
+        self._on_pair_requested = None
 
     def set_devices_changed_callback(self, cb) -> None:
         self._on_devices_changed = cb
+
+    def set_pair_requested_callback(self, cb) -> None:
+        """cb(device_id, name) is invoked (main loop) when a peer asks to
+        pair and we need the user to confirm."""
+        self._on_pair_requested = cb
 
     # -- lifecycle -------------------------------------------------------
 
@@ -247,6 +255,48 @@ class LanProvider:
             return False
         GLib.idle_add(_apply)
 
+    # -- pairing confirmation (peer-initiated) ---------------------------
+
+    PAIR_TIMEOUT_S = 30
+
+    def _request_pair_confirmation(self, link: "_Link") -> None:
+        # Called from a link thread; do the bookkeeping on the main loop.
+        GLib.idle_add(self._do_request_pair_confirmation, link)
+
+    def _do_request_pair_confirmation(self, link: "_Link") -> bool:
+        dev_id = link._device_id
+        name = link._peer.get("deviceName", dev_id)
+        self._pending_pairs[dev_id] = link
+        log.info("pairing requested by %s (%s) — awaiting confirmation",
+                 name, dev_id)
+        if self._on_pair_requested is not None:
+            self._on_pair_requested(dev_id, name)
+        self._pair_timeout_ids[dev_id] = GLib.timeout_add_seconds(
+            self.PAIR_TIMEOUT_S, self._expire_pair, dev_id)
+        return False
+
+    def respond_pairing(self, device_id: str, accept: bool) -> bool:
+        """Resolve a pending pair request (called from the main loop)."""
+        link = self._pending_pairs.pop(device_id, None)
+        tid = self._pair_timeout_ids.pop(device_id, None)
+        if tid:
+            GLib.source_remove(tid)
+        if link is None:
+            return False
+        link.accept_pairing() if accept else link.reject_pairing()
+        return True
+
+    def has_pending_pair(self, device_id: str) -> bool:
+        return device_id in self._pending_pairs
+
+    def _expire_pair(self, device_id: str) -> bool:
+        link = self._pending_pairs.pop(device_id, None)
+        self._pair_timeout_ids.pop(device_id, None)
+        if link is not None:
+            log.info("pair request from %s timed out — rejecting", device_id)
+            link.reject_pairing()
+        return False
+
 
 class _Link(threading.Thread):
     """One mutually-authenticated TLS link to a peer, on a worker thread."""
@@ -389,20 +439,34 @@ class _Link(threading.Thread):
 
     def _handle_pair(self, packet: NetworkPacket) -> None:
         if packet.body.get("pair"):
-            # TOFU: pin the cert we already verified at the TLS layer.
-            # (Production: gate this behind an explicit user confirmation.)
-            if self._peer_cert is not None:
-                self._provider.trust.pin(self._device_id, self._peer_cert)
-            self._paired = True
-            self._provider._mark_paired(self._device_id, True)
-            if not self._pair_requested:
-                self.send(NetworkPacket(PACKET_PAIR, {"pair": True}))
-            self._pair_requested = False
-            log.info("paired with %s", self._peer.get("deviceName"))
+            if self._pair_requested:
+                # We initiated; the peer accepted → finalise (we consented).
+                self._pair_requested = False
+                self._finalize_pair()
+            elif self._paired:
+                self.send(NetworkPacket(PACKET_PAIR, {"pair": True}))  # re-affirm
+            else:
+                # Peer wants to pair — ask the user before pinning anything.
+                self._provider._request_pair_confirmation(self)
         else:
             self._provider.trust.unpin(self._device_id)
             self._paired = False
             self._provider._mark_paired(self._device_id, False)
+
+    def _finalize_pair(self) -> None:
+        if self._peer_cert is not None:
+            self._provider.trust.pin(self._device_id, self._peer_cert)
+        self._paired = True
+        self._provider._mark_paired(self._device_id, True)
+        log.info("paired with %s", self._peer.get("deviceName"))
+
+    def accept_pairing(self) -> None:
+        """Confirm a peer-initiated pair request (called from the main loop)."""
+        self._finalize_pair()
+        self.send(NetworkPacket(PACKET_PAIR, {"pair": True}))
+
+    def reject_pairing(self) -> None:
+        self.send(NetworkPacket(PACKET_PAIR, {"pair": False}))
 
     # -- public ----------------------------------------------------------
 

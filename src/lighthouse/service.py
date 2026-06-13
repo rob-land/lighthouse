@@ -38,10 +38,20 @@ INTROSPECTION_XML = f"""
       <arg type="s" name="device_id" direction="in"/>
       <arg type="b" name="sent" direction="out"/>
     </method>
+    <!-- Accept or reject a pending pair request from a peer. -->
+    <method name="RespondPairing">
+      <arg type="s" name="device_id" direction="in"/>
+      <arg type="b" name="accept" direction="in"/>
+    </method>
     <signal name="Paged">
       <arg type="s" name="source"/>
     </signal>
     <signal name="PeersChanged"/>
+    <!-- A peer asked to pair; the UI should confirm with the user. -->
+    <signal name="PairRequested">
+      <arg type="s" name="device_id"/>
+      <arg type="s" name="name"/>
+    </signal>
   </interface>
 </node>
 """
@@ -89,9 +99,17 @@ class AgentClient:
             Gio.DBusCallFlags.NONE, -1, None)
         return bool(result.unpack()[0])
 
-    def connect_peers_changed(self, callback) -> None:
-        """Invoke `callback()` whenever the agent emits PeersChanged."""
-        def _on_signal(_proxy, _sender, signal_name, _params):
-            if signal_name == "PeersChanged":
-                callback()
+    def respond_pairing(self, device_id: str, accept: bool) -> None:
+        self._proxy.call_sync(
+            "RespondPairing", GLib.Variant("(sb)", (device_id, accept)),
+            Gio.DBusCallFlags.NONE, -1, None)
+
+    def connect_signal(self, signal: str, callback) -> None:
+        """Invoke `callback(*args)` whenever the agent emits `signal`."""
+        def _on_signal(_proxy, _sender, signal_name, params):
+            if signal_name == signal:
+                callback(*params.unpack())
         self._proxy.connect("g-signal", _on_signal)
+
+    def connect_peers_changed(self, callback) -> None:
+        self.connect_signal("PeersChanged", callback)

@@ -77,6 +77,13 @@ def test_pair_and_ring():
             loop.quit()
             return
         link_b.request_pair()
+        # A must NOT auto-accept; it raises a pending request the user
+        # confirms. Approve it on the main loop.
+        if not _wait_until(lambda: prov_a.has_pending_pair(id_b.device_id)):
+            loop.quit()
+            return
+        GLib.idle_add(
+            lambda: (prov_a.respond_pairing(id_b.device_id, True), False)[1])
         _wait_until(lambda: prov_a.trust.is_paired(id_b.device_id)
                     and prov_b.trust.is_paired(id_a.device_id))
         link_b.send(NetworkPacket(PACKET_FINDMYPHONE))
@@ -91,7 +98,45 @@ def test_pair_and_ring():
     assert pages == [id_b.device_name], f"page not delivered: {pages!r}"
     link_a.close()
     link_b.close()
-    print("OK  pair + pin + ring:  A paged by", pages[0])
+    print("OK  confirm + pair + pin + ring:  A paged by", pages[0])
+
+
+def test_pairing_rejected():
+    """A peer-initiated pair request is NOT honoured without confirmation,
+    and a reject leaves both sides unpaired (no auto-accept)."""
+    a_dir, b_dir = tempfile.mkdtemp(), tempfile.mkdtemp()
+    loop = GLib.MainLoop()
+    id_a = DeviceIdentity(a_dir)
+    id_b = DeviceIdentity(b_dir)
+    prov_a = LanProvider(id_a, on_page=lambda _s: None, trust_dir=a_dir)
+    prov_b = LanProvider(id_b, on_page=lambda _s: None, trust_dir=b_dir)
+
+    ssock, csock = _loopback_pair()
+    link_a = _Link(prov_a, ssock, "127.0.0.1", role="server")
+    link_b = _Link(prov_b, csock, "127.0.0.1", role="client",
+                   peer_identity=id_a.identity_packet().body)
+    link_a.start()
+    link_b.start()
+
+    def driver():
+        if _wait_until(lambda: link_a.is_up and link_b.is_up):
+            link_b.request_pair()
+            if _wait_until(lambda: prov_a.has_pending_pair(id_b.device_id)):
+                # Pending but not yet pinned — proves no auto-accept.
+                assert not prov_a.trust.is_paired(id_b.device_id)
+                GLib.idle_add(lambda: (prov_a.respond_pairing(
+                    id_b.device_id, False), False)[1])
+        time.sleep(1.0)
+        loop.quit()
+
+    threading.Thread(target=driver, daemon=True).start()
+    GLib.timeout_add_seconds(10, loop.quit)
+    loop.run()
+    assert not prov_a.trust.is_paired(id_b.device_id), "A pinned despite reject"
+    assert not prov_b.trust.is_paired(id_a.device_id), "B pinned despite reject"
+    link_a.close()
+    link_b.close()
+    print("OK  pairing reject leaves both unpaired (no auto-accept)")
 
 
 def test_unpaired_findmyphone_ignored():
@@ -145,5 +190,6 @@ def test_cert_mismatch_rejected():
 if __name__ == "__main__":
     test_cert_mismatch_rejected()
     test_unpaired_findmyphone_ignored()
+    test_pairing_rejected()
     test_pair_and_ring()
     print("\nALL TESTS PASSED")

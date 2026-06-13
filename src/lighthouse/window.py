@@ -71,6 +71,7 @@ class LighthouseWindow(Adw.ApplicationWindow):
         try:
             self._agent = AgentClient()
             self._agent.connect_peers_changed(self._refresh_peers)
+            self._agent.connect_signal("PairRequested", self._on_pair_requested)
         except GLib.Error:
             log.warning("could not connect to session bus", exc_info=True)
             self._agent = None
@@ -151,6 +152,27 @@ class LighthouseWindow(Adw.ApplicationWindow):
             sent = False
         self.toast_overlay.add_toast(Adw.Toast.new(
             _("Ringing…") if sent else _("Could not reach that device")))
+
+    def _on_pair_requested(self, device_id: str, name: str) -> None:
+        dialog = Adw.AlertDialog(
+            heading=_("Pair with “%s”?") % name,
+            body=_("This device wants to pair so it can ring this phone. "
+                   "Only accept devices you recognise."))
+        dialog.add_response("reject", _("Reject"))
+        dialog.add_response("accept", _("Accept"))
+        dialog.set_response_appearance(
+            "accept", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("reject")
+        dialog.connect("response", self._on_pair_response, device_id)
+        dialog.present(self)
+
+    def _on_pair_response(self, _dialog, response: str, device_id: str) -> None:
+        if self._agent is None or not self._agent.available:
+            return
+        try:
+            self._agent.respond_pairing(device_id, response == "accept")
+        except GLib.Error:
+            log.debug("RespondPairing failed", exc_info=True)
 
     @staticmethod
     def _spawn_beam(source: str) -> None:

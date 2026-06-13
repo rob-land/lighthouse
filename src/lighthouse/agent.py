@@ -36,6 +36,7 @@ class Agent:
         self._identity = DeviceIdentity()
         self._provider = LanProvider(self._identity, on_page=self._on_page)
         self._provider.set_devices_changed_callback(self._emit_peers_changed)
+        self._provider.set_pair_requested_callback(self._on_pair_requested)
         self._conn: Gio.DBusConnection | None = None
         self._reg_id = 0
         self._beam: subprocess.Popen | None = None
@@ -89,6 +90,10 @@ class Agent:
                 (device_id,) = params.unpack()
                 sent = self._provider.ring_peer(device_id)
                 invocation.return_value(GLib.Variant("(b)", (sent,)))
+            elif method == "RespondPairing":
+                (device_id, accept) = params.unpack()
+                self._provider.respond_pairing(device_id, accept)
+                invocation.return_value(None)
             else:
                 invocation.return_error_literal(
                     Gio.dbus_error_quark(),
@@ -125,6 +130,29 @@ class Agent:
         if self._conn is not None:
             self._conn.emit_signal(None, OBJECT_PATH, IFACE,
                                    "PeersChanged", None)
+
+    def _on_pair_requested(self, device_id: str, name: str) -> bool:
+        if self._conn is not None:
+            self._conn.emit_signal(None, OBJECT_PATH, IFACE, "PairRequested",
+                                   GLib.Variant("(ss)", (device_id, name)))
+        self._notify("Pairing request",
+                     f"{name} wants to pair with this phone.")
+        return False
+
+    def _notify(self, title: str, body: str) -> None:
+        try:
+            proxy = Gio.DBusProxy.new_for_bus_sync(
+                Gio.BusType.SESSION, Gio.DBusProxyFlags.NONE, None,
+                "org.freedesktop.Notifications",
+                "/org/freedesktop/Notifications",
+                "org.freedesktop.Notifications", None)
+            proxy.call_sync("Notify", GLib.Variant(
+                "(susssasa{sv}i)",
+                ("Lighthouse", 0, "land.rob.lighthouse", title, body,
+                 [], {}, -1)),
+                Gio.DBusCallFlags.NONE, -1, None)
+        except GLib.Error:
+            log.debug("notification failed", exc_info=True)
 
 
 def run_agent(_argv: list[str]) -> int:

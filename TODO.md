@@ -25,18 +25,19 @@ The three processes (DESIGN §2): `lighthoused` (agent, systemd-user),
 > pair→pin→ring, unpaired-ring-ignored, and MITM-cert-rejected between two
 > instances over loopback — all green.
 >
-> **Remaining for P0:** (a) a user-facing **pairing-confirm prompt** —
-> pairing currently auto-accepts (it pins on accept, so an accepted
-> pairing *is* authenticated, but any LAN peer can currently get
-> accepted); (b) validate interop against a real KDE Connect / Valent peer
-> (two devices); (c) run the beam on an actual display/Phosh session.
+> **Remaining for P0:** (a) validate interop against a real KDE Connect /
+> Valent peer (two devices); (b) run the beam on an actual display/Phosh
+> session. Both need hardware this was developed without.
 >
-> 🟠 **Security status.** The original `CERT_NONE`/no-pinning gap is
-> **closed**: links use mutual TLS, capture the peer cert, pin it on
-> pairing, and refuse a mismatched cert on reconnect (MITM-rejected, with
-> a regression test). `findmyphone` is honoured only from a paired,
-> cert-verified peer. Remaining hardening is the pairing-confirm prompt so
-> a human authorises *which* peers get pinned in the first place.
+> 🟢 **Security status.** The original `CERT_NONE`/no-pinning gap is
+> **closed** and a **pairing-confirm prompt** now gates which peers get
+> pinned: a peer-initiated pair request is held pending (30s timeout),
+> surfaced via the `PairRequested` D-Bus signal + a desktop notification,
+> and confirmed in the GUI (`RespondPairing`) before any cert is pinned.
+> Links use mutual TLS, pin the peer cert on confirmed pairing, refuse a
+> mismatched cert on reconnect (MITM-rejected), and honour `findmyphone`
+> only from a paired, cert-verified peer. All covered by `meson test`
+> (confirm→pair→ring, reject-no-pin, unpaired-ignored, MITM-rejected).
 
 ### 1. `lighthoused` — agent daemon skeleton ✅ (first draft)
 A GLib main-loop daemon launched by a systemd-user unit. Owns transport
