@@ -1,0 +1,46 @@
+{
+  "name": "python3-cryptography",
+  "buildsystem": "simple",
+  "build-commands": [
+    "pip3 install --verbose --exists-action=i --no-index --find-links=\"file://${PWD}\" --prefix=${FLATPAK_DEST} \"cryptography\" --no-build-isolation"
+  ],
+  "sources": [
+    {
+      "type": "file",
+      "url": "https://files.pythonhosted.org/packages/6f/08/f2e7d62c460faae0926f2d6e423694aa409ced3bc1fe2927a0a6e5f05416/cffi-2.1.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "sha256": "799416bae98336e400981ff6e532d67d5c709cfb30afb79865a1315f94b0e224",
+      "only-arches": [
+        "x86_64"
+      ]
+    },
+    {
+      "type": "file",
+      "url": "https://files.pythonhosted.org/packages/3a/a6/e879bb68cc23a2bc9ba8f4b7d8019f0c2694bad2ab6c4a3701d429439f58/cffi-2.1.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "sha256": "ff067a8d8d880e7809e4ac88eb009bb848870115317b306666502ccad30b147f",
+      "only-arches": [
+        "aarch64"
+      ]
+    },
+    {
+      "type": "file",
+      "url": "https://files.pythonhosted.org/packages/e6/8b/43011f7ebe515a8aa20d61f290a326cd890c2e738e16e59eaff8d9c3a412/cryptography-49.0.0-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "sha256": "0e959b578856a3924bc0cbb710fc12c387b9412a951389f3ca61704a9e25f325",
+      "only-arches": [
+        "x86_64"
+      ]
+    },
+    {
+      "type": "file",
+      "url": "https://files.pythonhosted.org/packages/09/41/3797cfaf69cae04a13ee78ebd83f0678d9c02b4779d21ce24445326f1a69/cryptography-49.0.0-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "sha256": "36d1709f992593689b45bda411498d62c6e365f2ca00b84657d4dadd24de16db",
+      "only-arches": [
+        "aarch64"
+      ]
+    },
+    {
+      "type": "file",
+      "url": "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl",
+      "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
+    }
+  ]
+}
