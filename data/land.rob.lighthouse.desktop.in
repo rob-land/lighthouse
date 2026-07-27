@@ -6,6 +6,6 @@ Exec=lighthouse
 Icon=land.rob.lighthouse
 Terminal=false
 Type=Application
-Categories=GTK;
+Categories=Utility;GTK;
 StartupNotify=true
 StartupWMClass=land.rob.lighthouse
