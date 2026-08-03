@@ -299,7 +299,12 @@ class LanProvider:
 
 
 class _Link(threading.Thread):
-    """One mutually-authenticated TLS link to a peer, on a worker thread."""
+    """One mutually-authenticated TLS link to a peer, on a worker thread.
+
+    Members here share a namespace with ``threading.Thread``'s own
+    privates, which grow between CPython releases — 3.13 added
+    ``_handle`` — so keep new attribute and method names specific.
+    """
 
     def __init__(self, provider: LanProvider, sock: socket.socket,
                  address: str, role: str, peer_identity: dict | None = None):
@@ -418,9 +423,9 @@ class _Link(threading.Thread):
             if line is None:       # EOF
                 break
             if line.strip():
-                self._handle(line)
+                self._handle_packet(line)
 
-    def _handle(self, line: str) -> None:
+    def _handle_packet(self, line: str) -> None:
         try:
             packet = NetworkPacket.parse(line)
         except (ValueError, KeyError):
