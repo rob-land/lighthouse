@@ -1,0 +1,115 @@
+name: Debian package
+
+# Builds the .deb that ships lighthouse as a *host* package rather than a
+# Flatpak — the agent needs a systemd user unit, raw LAN access for KDE
+# Connect, and the host's wpctl to override silent mode, none of which
+# survive the sandbox. The package is uploaded to the rolling `continuous`
+# release; the shared rob-land/apt-repo aggregator picks it up (hourly
+# cron or manual dispatch), indexes and GPG-signs it, and publishes to
+# https://rob-land.github.io/apt-repo/ — install from there.
+#
+# No secrets required here: signing happens only in the aggregator.
+#
+# The build runs in a debian:trixie container rather than on the Ubuntu
+# runner directly, so dependency names and versions match what the
+# Debian-derived phone distros actually ship. The package is
+# Architecture: all (pure Python + GI), so one build serves amd64 and
+# arm64 alike.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:trixie
+    steps:
+      # Before checkout: actions/checkout needs git present, or it falls
+      # back to a tarball download and we lose the sha for the version stamp.
+      - name: Install the build toolchain
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential debhelper devscripts dpkg-dev dh-python \
+            meson ninja-build blueprint-compiler gettext \
+            desktop-file-utils appstream lintian \
+            pkg-config libglib2.0-bin libglib2.0-dev libglib2.0-dev-bin \
+            libgtk-4-bin gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-glib-2.0 \
+            python3-all python3-gi python3-cryptography glib-networking \
+            git ca-certificates
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Stamp a continuous version
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          git config --global --add safe.directory "$PWD"
+          export DEBEMAIL="ci@rob.land" DEBFULLNAME="rob-land CI"
+          base=$(dpkg-parsechangelog -S Version)
+          # +git<utc>.<sha> sorts above the base version and strictly
+          # increases, so apt always sees an upgrade on the phone.
+          snap="${base}+git$(date -u +%Y%m%d%H%M).$(git rev-parse --short HEAD)"
+          dch --newversion "$snap" --distribution unstable \
+            "Continuous build from ${SHA}."
+          echo "built version: $snap"
+
+      # dh_auto_test runs the meson suite (including the loopback
+      # pair -> pin -> ring link test), so a failure here fails the build.
+      - name: Build
+        run: dpkg-buildpackage -us -uc -b
+
+      - name: Lint (informational)
+        continue-on-error: true
+        run: lintian --no-tag-display-limit ../*.deb
+
+      - name: Collect the debs
+        run: |
+          mkdir -p debs
+          cp ../*.deb debs/
+          tar -cf debs.tar -C debs .
+          ls -la debs/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: debs
+          path: debs.tar
+
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+
+      - name: Update the rolling continuous release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create continuous --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "Continuous build" \
+            --notes "Rolling artifacts consumed by rob-land/apt-repo and rob-land/flatpak-repo. Packages here are unsigned; prefer installing from the signed shared repos." \
+            --latest=false 2>/dev/null || true
+          gh release upload continuous --repo "$GITHUB_REPOSITORY" --clobber \
+            debs.tar
+
+      - name: Nudge the aggregator (best-effort)
+        env:
+          GH_TOKEN: ${{ secrets.AGGREGATOR_DISPATCH_TOKEN }}
+        run: |
+          [ -z "$GH_TOKEN" ] && { echo "no dispatch token — aggregator cron will pick this up"; exit 0; }
+          gh workflow run aggregate.yml --repo rob-land/apt-repo || true

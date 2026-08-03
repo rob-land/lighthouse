@@ -8,6 +8,18 @@ _flatpak_aarch64/
 repo/
 *.flatpak
 
+# Debian packaging (debian/ itself is tracked; these are build output)
+obj-*-linux-gnu/
+debian/.debhelper/
+debian/lighthouse/
+debian/files
+debian/debhelper-build-stamp
+debian/*.substvars
+debian/*.debhelper.log
+*.deb
+*.buildinfo
+*.changes
+
 # Python
 __pycache__/
 *.pyc

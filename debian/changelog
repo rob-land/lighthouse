@@ -1,0 +1,7 @@
+lighthouse (0.1.0) unstable; urgency=medium
+
+  * Initial Debian packaging. Ships the find-my agent as a systemd user
+    unit and gives it unsandboxed access to the LAN and to wpctl —
+    none of which the Flatpak build can do.
+
+ -- Rob Land <thick.beach7895@fastmail.com>  Sun, 02 Aug 2026 00:00:00 +0000

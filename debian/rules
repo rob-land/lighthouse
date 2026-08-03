@@ -1,0 +1,7 @@
+#!/usr/bin/make -f
+
+# Meson already installs everything in the right place (the systemd user
+# unit lands in /usr/lib/systemd/user, where dh_installsystemduser finds
+# it and wires up enablement), so the default sequence needs no help.
+%:
+	dh $@ --buildsystem=meson --with python3
