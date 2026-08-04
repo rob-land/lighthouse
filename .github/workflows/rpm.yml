@@ -1,0 +1,136 @@
+name: RPM package
+
+# Builds the Fedora package, for the same reason as the .deb: the agent
+# needs a systemd user unit, the host's wpctl, and unsandboxed LAN
+# access, none of which survive the Flatpak sandbox.
+#
+# The package is uploaded to the rolling `continuous` release; the shared
+# rob-land/rpm-repo aggregator picks it up (hourly cron or manual
+# dispatch), signs it, builds the repodata and publishes to
+# https://rob-land.github.io/rpm-repo/ — install from there.
+#
+# No secrets required here: RPM signing happens only in the aggregator.
+#
+# noarch, but rpm still derives python(abi) = 3.x from the site-packages
+# path, so the package is only valid for the Fedora it was built on. The
+# aggregator files it by the .fcNN in its name — to support another
+# Fedora, add it to the matrix and both will be published.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: ["43"]
+    runs-on: ubuntu-24.04
+    container:
+      image: registry.fedoraproject.org/fedora:${{ matrix.fedora }}
+    steps:
+      # Before checkout: actions/checkout needs git present, or it falls
+      # back to a tarball download and we lose the sha for the version stamp.
+      - name: Install the build toolchain
+        run: |
+          dnf -y install --setopt=install_weak_deps=False \
+            rpm-build rpmdevtools dnf5-plugins git tar findutils
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Build the RPM
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          git config --global --add safe.directory "$PWD"
+          rpmdev-setuptree
+          spec=build-aux/rpm/lighthouse.spec
+          ver=$(rpm -q --qf '%{version}\n' --specfile "$spec" | head -1)
+          # 0.<utc>git<sha> sorts below a future tagged 1%{?dist} and
+          # strictly increases, so dnf always sees an upgrade.
+          snap="0.$(date -u +%Y%m%d%H%M)git$(git rev-parse --short HEAD)"
+          echo "building ${ver}-${snap}"
+
+          # Source tarball straight from the checkout. Excludes are
+          # anchored: a bare _* would also drop __init__.py.
+          srcdir="/tmp/lighthouse-${ver}"
+          mkdir -p "$srcdir"
+          tar --exclude=./.git --exclude=./_build --exclude=./_install \
+              --exclude='./_flatpak*' --exclude='./*.flatpak' \
+              --exclude=./repo --exclude=./.flatpak-builder \
+              -cf - . | tar -xf - -C "$srcdir"
+          tar -czf ~/rpmbuild/SOURCES/"lighthouse-${ver}.tar.gz" \
+              -C /tmp "lighthouse-${ver}"
+
+          dnf -y builddep "$spec"
+          # %check runs the meson suite, including the loopback
+          # pair -> pin -> ring link test, so it gates the package.
+          rpmbuild -bb --define "_snapver ${snap}" "$spec"
+
+      - name: Verify the dependencies resolve and the app imports
+        run: |
+          dnf -y install ~/rpmbuild/RPMS/noarch/lighthouse-*.rpm
+          test -x /usr/bin/lighthouse
+          test -f /usr/lib/systemd/user/land.rob.lighthouse.service
+          test -f /usr/lib/systemd/user-preset/50-lighthouse.preset
+          python3 -c "import lighthouse; print('import lighthouse: ok')"
+
+      - name: Collect the rpms
+        run: |
+          mkdir -p rpms
+          cp ~/rpmbuild/RPMS/noarch/*.rpm rpms/
+          tar -cf rpms.tar -C rpms .
+          ls -la rpms/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rpms-fc${{ matrix.fedora }}
+          path: rpms.tar
+
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: rpms-*
+          path: incoming
+
+      # One rpms.tar per Fedora in the matrix; merge them into the single
+      # tarball the aggregator fetches.
+      - name: Merge the per-release tarballs
+        run: |
+          mkdir -p merged
+          find incoming -name 'rpms.tar' -exec tar -xf {} -C merged \;
+          tar -cf rpms.tar -C merged .
+          tar -tf rpms.tar
+
+      - name: Update the rolling continuous release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create continuous --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "Continuous build" \
+            --notes "Rolling artifacts consumed by rob-land/apt-repo, rob-land/rpm-repo and rob-land/flatpak-repo. Packages here are unsigned; prefer installing from the signed shared repos." \
+            --latest=false 2>/dev/null || true
+          gh release upload continuous --repo "$GITHUB_REPOSITORY" --clobber \
+            rpms.tar
+
+      - name: Nudge the aggregator (best-effort)
+        env:
+          GH_TOKEN: ${{ secrets.AGGREGATOR_DISPATCH_TOKEN }}
+        run: |
+          [ -z "$GH_TOKEN" ] && { echo "no dispatch token — aggregator cron will pick this up"; exit 0; }
+          gh workflow run aggregate.yml --repo rob-land/rpm-repo || true
